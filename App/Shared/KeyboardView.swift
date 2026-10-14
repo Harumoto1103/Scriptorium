@@ -26,7 +26,11 @@ final class KeyboardView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = .clear
+        // NOT .clear: a keyboard extension is composited by the system, and touches
+        // on fully transparent pixels (the gaps between keys) are never delivered
+        // to us. A nearly invisible tint makes every point catch touches, so the
+        // nearest-key routing below actually sees taps that land between keys.
+        backgroundColor = UIColor(white: 0.5, alpha: 0.02)
         isMultipleTouchEnabled = true
         bar.axis = .horizontal
         bar.distribution = .fillEqually
