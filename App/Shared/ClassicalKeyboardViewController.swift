@@ -160,9 +160,34 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
         guard !s.isEmpty else { return }
         textDocumentProxy.insertText(s)
         if kv.showDiagnostics { kv.counters.typed += s.count }
+        scheduleVerify()
         shadow += s
         if shadow.count > 400 { shadow = String(shadow.suffix(300)) }
         lastOwnEdit = Date()
+    }
+
+    /// After a pause, check the document really contains what we think we typed.
+    /// If the host dropped something, follow the document (and count it).
+    private var verifyWork: DispatchWorkItem?
+    private func scheduleVerify() {
+        verifyWork?.cancel()
+        let w = DispatchWorkItem { [weak self] in self?.verify() }
+        verifyWork = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: w)
+    }
+
+    private func verify() {
+        guard Date().timeIntervalSince(lastOwnEdit) >= 0.75 else { scheduleVerify(); return }
+        let ctx = textDocumentProxy.documentContextBeforeInput ?? ""
+        let n = min(ctx.count, shadow.count, 60)
+        guard n > 0, String(ctx.suffix(n)) != String(shadow.suffix(n)) else { return }
+        if kv.showDiagnostics {
+            kv.counters.mismatch += 1
+            kv.mismatchSample = "kbd:…\(shadow.suffix(14)) doc:…\(ctx.suffix(14))"
+        }
+        shadow = ctx
+        lastCommitted = nil
+        lastCorrection = nil
     }
 
     private func del(_ n: Int) {
@@ -359,23 +384,29 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
         if language == .greek, settings.greekAutoGrave, let prev = lastCommitted,
            before.hasSuffix(prev + " " + word) {
             let (p, n) = Greek.join(prev, text)
-            if p != prev {
-                del(word.count + 1 + prev.count)
-                ins(p + " ")
-            } else {
-                del(word.count)
-            }
+            rewrite(prev + " " + word, as: p + " " + n + trailing)
             out = n
         } else {
-            del(word.count)
+            rewrite(word, as: out + trailing)
         }
-        ins(out + trailing)
         lastCommitted = trailing == " " ? out : nil
         let learned = text, after = context().0, lang = language
         engineQ.async { [weak self] in self?.predictor?.user.learn(learned, after: after, language: lang) }
         lastCorrection = nil
         updateShift()
         refresh()
+    }
+
+    /// Replace `old` (the text just before the cursor) with `new`, touching only
+    /// what differs: unchanged words cost one insert (the space), "nos" → "nōs"
+    /// deletes 2 not 3. Host apps can drop keystrokes during bursts of
+    /// deletes + inserts, so the fewer proxy calls the better.
+    private func rewrite(_ old: String, as new: String) {
+        let o = Array(old), n = Array(new)
+        var k = 0
+        while k < o.count, k < n.count, o[k] == n[k] { k += 1 }
+        del(o.count - k)
+        ins(String(n[k...]))
     }
 
     private func backspace() {

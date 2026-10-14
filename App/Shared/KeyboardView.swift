@@ -143,7 +143,8 @@ final class KeyboardView: UIView {
         relaxSystemGates()
         bar.frame = CGRect(x: 4, y: 0, width: bounds.width - 8 - 36, height: Self.barHeight)
         moreButton.frame = CGRect(x: bounds.width - 40, y: 0, width: 36, height: Self.barHeight)
-        diagLabel.frame = CGRect(x: 6, y: 0, width: bounds.width - 12, height: 12)
+        diagLabel.frame = CGRect(x: 6, y: 0, width: bounds.width - 12, height: 24)
+        diagLabel.numberOfLines = 2
         let pad: CGFloat = 3
         let unit = bounds.width / 10
         var y = Self.barHeight
@@ -219,7 +220,9 @@ final class KeyboardView: UIView {
     private var touches: [ObjectIdentifier: Tracked] = [:]
 
     // MARK: diagnostics — where do fast keystrokes go missing?
-    struct Counters { var touches = 0, fired = 0, cancelled = 0, rolled = 0, typed = 0 }
+    struct Counters { var touches = 0, fired = 0, cancelled = 0, rolled = 0, typed = 0, mismatch = 0 }
+    /// last place where the document differed from what we typed
+    var mismatchSample = "" { didSet { diagLabel.text = diagnosticsText } }
     var counters = Counters() { didSet { diagLabel.text = diagnosticsText } }
     var showDiagnostics = false {
         didSet { diagLabel.isHidden = !showDiagnostics; if showDiagnostics { counters = Counters() } }
@@ -235,7 +238,8 @@ final class KeyboardView: UIView {
     }()
     private var diagnosticsText: String {
         let c = counters
-        return "touch \(c.touches) · fired \(c.fired) · cancel \(c.cancelled) · roll \(c.rolled) · typed \(c.typed)"
+        let base = "touch \(c.touches) · fired \(c.fired) · cancel \(c.cancelled) · roll \(c.rolled) · typed \(c.typed) · lost \(c.mismatch)"
+        return mismatchSample.isEmpty ? base : base + "\n" + mismatchSample
     }
 
     private func nearestKey(to point: CGPoint) -> KeyCap? {
