@@ -6,6 +6,8 @@ import Cocoa
 /// on the selection, click to choose.
 final class CandidatePanel: NSPanel {
     var onSelect: ((Int) -> Void)?
+    var onNextPage: (() -> Void)?
+    private let pageLabel = PageIndicator()
 
     private let stack = NSStackView()
     private var legacyBorder: NSVisualEffectView?
@@ -59,7 +61,7 @@ final class CandidatePanel: NSPanel {
 
     override var canBecomeKey: Bool { false }
 
-    func show(_ candidates: [String], selected: Int, below rect: NSRect) {
+    func show(_ candidates: [String], selected: Int, page: Int = 0, pageCount: Int = 1, below rect: NSRect) {
         guard !candidates.isEmpty else { orderOut(nil); return }
         while cells.count < candidates.count {
             let c = CandidateCell()
@@ -71,6 +73,12 @@ final class CandidatePanel: NSPanel {
             let c = cells[i]
             c.configure(index: i, text: text, selected: i == selected)
             stack.addArrangedSubview(c)
+        }
+        if pageCount > 1 {
+            // "1/3 ⌄": more candidates on further pages (↓ / ↑, PgDn / PgUp, or click)
+            pageLabel.set(page: page, of: pageCount)
+            pageLabel.onClick = { [weak self] in self?.onNextPage?() }
+            stack.addArrangedSubview(pageLabel)
         }
         legacyBorder?.layer?.borderColor = NSColor.separatorColor.cgColor   // follow appearance changes
         stack.layoutSubtreeIfNeeded()
@@ -144,5 +152,30 @@ private final class CandidateCell: NSView {
     override func mouseEntered(with event: NSEvent) { hovering = true }
     override func mouseExited(with event: NSEvent) { hovering = false }
     override func mouseUp(with event: NSEvent) { onClick?(index) }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+/// Small grey "2/3 ⌄" at the end of the bar; click for the next page.
+private final class PageIndicator: NSView {
+    var onClick: (() -> Void)?
+    private let label = NSTextField(labelWithString: "")
+
+    init() {
+        super.init(frame: .zero)
+        label.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        label.textColor = .secondaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func set(page: Int, of count: Int) { label.stringValue = "\(page + 1)/\(count) ⌄" }
+    override func mouseUp(with event: NSEvent) { onClick?() }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }

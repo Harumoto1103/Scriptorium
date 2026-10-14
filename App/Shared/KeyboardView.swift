@@ -6,6 +6,7 @@ protocol KeyboardViewDelegate: AnyObject {
     func variantChosen(_ text: String, of key: KeySpec)
     func suggestionTapped(_ index: Int)
     func spaceLongPressed()
+    func moreSuggestionChosen(_ text: String)
     /// The controller, whose handleInputModeList(from:with:) drives the globe key.
     var inputController: UIInputViewController? { get }
 }
@@ -41,11 +42,66 @@ final class KeyboardView: UIView {
             suggestionButtons.append(b)
         }
         addSubview(bar)
+        moreButton.setImage(UIImage(systemName: "chevron.down"), for: .normal)
+        moreButton.tintColor = .secondaryLabel
+        moreButton.isHidden = true
+        moreButton.addAction(UIAction { [weak self] _ in self?.toggleMore() }, for: .touchUpInside)
+        addSubview(moreButton)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     /// texts: up to 3; `highlight` is the slot that space will insert.
+    // MARK: more suggestions (▾)
+
+    private let moreButton = UIButton(type: .system)
+    private var more: [String] = []
+    private var grid: UIScrollView?
+
+    /// Suggestions beyond the three in the bar; shows the ▾ button when there are any.
+    func setMore(_ items: [String]) {
+        more = items
+        moreButton.isHidden = items.isEmpty
+        if items.isEmpty { closeMore() } else if grid != nil { buildGrid() }
+    }
+
+    private func toggleMore() { grid == nil ? buildGrid() : closeMore() }
+
+    func closeMore() {
+        grid?.removeFromSuperview(); grid = nil
+        moreButton.setImage(UIImage(systemName: "chevron.down"), for: .normal)
+    }
+
+    /// A scrollable grid over the keys, like the candidate grids of CJK keyboards.
+    private func buildGrid() {
+        grid?.removeFromSuperview()
+        let g = UIScrollView(frame: CGRect(x: 0, y: Self.barHeight, width: bounds.width,
+                                           height: bounds.height - Self.barHeight))
+        g.backgroundColor = .secondarySystemBackground
+        g.autoresizingMask = [.flexibleWidth]
+        let cols = 3, h: CGFloat = 46, w = (bounds.width - 8) / CGFloat(cols)
+        for (i, t) in more.enumerated() {
+            let b = UIButton(type: .system)
+            b.setTitle(t, for: .normal)
+            b.setTitleColor(.label, for: .normal)
+            b.titleLabel?.font = .systemFont(ofSize: 19)
+            b.titleLabel?.adjustsFontSizeToFitWidth = true
+            b.frame = CGRect(x: 4 + CGFloat(i % cols) * w, y: CGFloat(i / cols) * h, width: w, height: h)
+                .insetBy(dx: 2, dy: 2)
+            b.backgroundColor = .systemBackground
+            b.layer.cornerRadius = 8
+            b.addAction(UIAction { [weak self] _ in
+                self?.closeMore()
+                self?.delegate?.moreSuggestionChosen(t)
+            }, for: .touchUpInside)
+            g.addSubview(b)
+        }
+        g.contentSize = CGSize(width: bounds.width, height: CGFloat((more.count + cols - 1) / cols) * h + 8)
+        addSubview(g)
+        grid = g
+        moreButton.setImage(UIImage(systemName: "chevron.up"), for: .normal)
+    }
+
     func setSuggestions(_ texts: [String], highlight: Int?) {
         for (i, b) in suggestionButtons.enumerated() {
             let t = i < texts.count ? texts[i] : ""
@@ -97,7 +153,8 @@ final class KeyboardView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        bar.frame = CGRect(x: 4, y: 0, width: bounds.width - 8, height: Self.barHeight)
+        bar.frame = CGRect(x: 4, y: 0, width: bounds.width - 8 - 36, height: Self.barHeight)
+        moreButton.frame = CGRect(x: bounds.width - 40, y: 0, width: 36, height: Self.barHeight)
         let pad: CGFloat = 3
         let unit = bounds.width / 10
         var y = Self.barHeight

@@ -141,13 +141,23 @@ final class InputController: IMKInputController {
         guard event.type == .keyDown, let client = sender as? IMKTextInput, let c = composer else { return false }
         let mods = event.modifierFlags.intersection([.command, .control, .option])
         let composing = c.isComposing
+
+        // JIS 英数 / かな: settle the word, then switch input source like a Japanese keyboard expects
+        if event.keyCode == 102 || event.keyCode == 104 {
+            if composing { apply(c.handle(.enter), client) }      // commit the highlighted candidate
+            c.reset()
+            Self.switchTo(event.keyCode == 102 ? Self.alphanumericSources : Self.kanaSources)
+            return true
+        }
         let betaMode = UserDefaults.standard.bool(forKey: "greekBetaCode")
 
         // while composing, arrows walk the candidate bar (→ ↓ next, ← ↑ previous)
         if composing && mods.isEmpty {
             switch event.keyCode {
-            case 124, 125: apply(c.handle(.tab), client); return true
-            case 123, 126: apply(c.handle(.previous), client); return true
+            case 124: apply(c.handle(.tab), client); return true                // → next candidate
+            case 123: apply(c.handle(.previous), client); return true           // ← previous
+            case 125, 121: apply(c.handle(.nextPage), client); return true      // ↓ PgDn: next page
+            case 126, 116: apply(c.handle(.previousPage), client); return true  // ↑ PgUp: previous page
             case 48 where event.modifierFlags.contains(.shift): apply(c.handle(.previous), client); return true
             default: break
             }
@@ -254,7 +264,32 @@ final class InputController: IMKInputController {
             guard let self, let c = self.composer else { return }
             self.apply(c.handle(.choose(i + 1)), client)      // clicked a candidate
         }
-        Self.panel.show(c.candidates, selected: c.selected, below: rect)
+        Self.panel.onNextPage = { [weak self] in
+            guard let self, let c = self.composer else { return }
+            self.apply(c.handle(.nextPage), client)
+        }
+        Self.panel.show(c.pageCandidates, selected: c.selected % Composer.pageSize,
+                        page: c.page, pageCount: c.pageCount, below: rect)
+    }
+
+    // MARK: 英数 / かな
+
+    /// 英数 goes to the user's alphanumeric source, かな to Japanese; first enabled one wins.
+    static let alphanumericSources = ["com.apple.inputmethod.Kotoeri.RomajiTyping.Roman",
+                                      "com.apple.inputmethod.Kotoeri.KanaTyping.Roman",
+                                      "com.apple.keylayout.ABC", "com.apple.keylayout.US"]
+    static let kanaSources = ["com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese",
+                              "com.apple.inputmethod.Kotoeri.KanaTyping.Japanese"]
+
+    static func switchTo(_ ids: [String]) {
+        guard let list = TISCreateInputSourceList(nil, false)?.takeRetainedValue() as? [TISInputSource] else { return }
+        func id(_ s: TISInputSource) -> String? {
+            TISGetInputSourceProperty(s, kTISPropertyInputSourceID)
+                .map { Unmanaged<CFString>.fromOpaque($0).takeUnretainedValue() as String }
+        }
+        for want in ids {
+            if let s = list.first(where: { id($0) == want }) { TISSelectInputSource(s); return }
+        }
     }
 
     // MARK: menu (input-source menu in the menu bar)

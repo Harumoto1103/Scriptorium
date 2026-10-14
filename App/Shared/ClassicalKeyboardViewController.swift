@@ -132,6 +132,13 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
             slots = [word] + s.prefix(2)
         }
         kv.setSuggestions(slots, highlight: autocorrectSlot)
+        let shown = Set(slots) .union([word])
+        kv.setMore(pred.suggestions.map(\.text).filter { !shown.contains($0) })
+    }
+
+    func moreSuggestionChosen(_ text: String) {
+        let (_, word) = context()
+        replaceWord(word, with: text, trailing: " ")
     }
 
     // MARK: key handling
