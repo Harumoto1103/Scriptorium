@@ -20,7 +20,6 @@ final class KeyboardView: UIView {
     private let bar = UIStackView()
     private var suggestionButtons: [UIButton] = []
     private var keyViews: [(KeySpec, KeyCap)] = []
-    private var callout: VariantCallout?
 
     static let barHeight: CGFloat = 44
     static let rowHeight: CGFloat = 54
@@ -28,6 +27,7 @@ final class KeyboardView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = .clear
+        isMultipleTouchEnabled = true
         bar.axis = .horizontal
         bar.distribution = .fillEqually
         for i in 0..<3 {
@@ -115,27 +115,14 @@ final class KeyboardView: UIView {
     @objc private func suggestion(_ b: UIButton) { delegate?.suggestionTapped(b.tag) }
 
     private func rebuild() {
+        endAllTouches()
         keyViews.forEach { $0.1.removeFromSuperview() }
         keyViews = []
         for row in rows {
             for spec in row {
+                // caps only draw; all touches are tracked by this view (see "Touch handling")
                 let cap = KeyCap(spec: spec)
-                cap.addTarget(self, action: #selector(tap(_:)), for: .touchUpInside)
-                if !spec.variants.isEmpty {
-                    let lp = UILongPressGestureRecognizer(target: self, action: #selector(longPress(_:)))
-                    lp.minimumPressDuration = 0.35
-                    cap.addGestureRecognizer(lp)
-                }
-                if spec.kind == .space {
-                    let lp = UILongPressGestureRecognizer(target: self, action: #selector(spaceLongPress(_:)))
-                    lp.minimumPressDuration = 0.6
-                    cap.addGestureRecognizer(lp)
-                }
-                if spec.kind == .globe, let c = delegate?.inputController {
-                    // Apple's switcher (tap = next keyboard, hold = list) needs the system handler
-                    cap.addTarget(c, action: #selector(UIInputViewController.handleInputModeList(from:with:)),
-                                  for: .allTouchEvents)
-                }
+                cap.isUserInteractionEnabled = false
                 addSubview(cap)
                 keyViews.append((spec, cap))
             }
@@ -173,55 +160,144 @@ final class KeyboardView: UIView {
 
     var preferredHeight: CGFloat { Self.barHeight + CGFloat(rows.count) * Self.rowHeight }
 
-    /// Like Apple's keyboard, there are no dead zones: a touch in a gap between
-    /// keys, or in the margin beside a short row (left of "a"), goes to the
-    /// nearest key in that row. Fast typing lands in those gaps a lot.
-    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        let hit = super.hitTest(point, with: event)
-        guard point.y >= Self.barHeight, hit === self || hit == nil, bounds.contains(point) else { return hit }
+    // MARK: Touch handling
+    //
+    // One view tracks every finger, like Apple's keyboard, instead of one control
+    // per key. Per-key controls lose letters in fast typing: when thumbs overlap
+    // or iOS cancels a touch (system edge / home-indicator gestures), the key
+    // never sees "touch up inside". Here:
+    //  * a touch goes to the nearest key (no dead zones between keys);
+    //  * a new finger landing commits any key still held (rollover);
+    //  * a cancelled short tap still counts;
+    //  * long-press opens variants (vowels) or settings (space); ⌫ repeats.
+
+    private final class Tracked {
+        let cap: KeyCap
+        let start = Date()
+        var timer: Timer?
+        var repeater: Timer?
+        var callout: VariantCallout?
+        var done = false            // already fired (rollover, ⌫ on touch-down, long-press)
+        init(cap: KeyCap) { self.cap = cap }
+    }
+    private var touches: [ObjectIdentifier: Tracked] = [:]
+
+    private func nearestKey(to point: CGPoint) -> KeyCap? {
         let row = Int((point.y - Self.barHeight) / Self.rowHeight)
-        let candidates = keyViews.map(\.1).filter {
-            Int(($0.frame.midY - Self.barHeight) / Self.rowHeight) == row && !$0.isHidden
-        }
+        let inRow = keyViews.map(\.1).filter { Int(($0.frame.midY - Self.barHeight) / Self.rowHeight) == row }
         func distance(_ v: UIView) -> CGFloat {
             let f = v.frame
             let dx = max(f.minX - point.x, 0, point.x - f.maxX)
             let dy = max(f.minY - point.y, 0, point.y - f.maxY)
             return dx * dx + dy * dy
         }
-        return candidates.min { distance($0) < distance($1) } ?? hit
+        return (inRow.isEmpty ? keyViews.map(\.1) : inRow).min { distance($0) < distance($1) }
     }
 
-    @objc private func tap(_ cap: KeyCap) {
+    private func fire(_ t: Tracked) {
+        guard !t.done else { return }
+        t.done = true
         UIDevice.current.playInputClick()
-        delegate?.keyTapped(cap.spec)
+        delegate?.keyTapped(t.cap.spec)
     }
 
-    @objc private func spaceLongPress(_ g: UILongPressGestureRecognizer) {
-        if g.state == .began { delegate?.spaceLongPressed() }
+    private func finish(_ t: Tracked) {
+        t.timer?.invalidate(); t.repeater?.invalidate()
+        t.callout?.removeFromSuperview()
+        t.cap.isHighlighted = false
     }
 
-    @objc private func longPress(_ g: UILongPressGestureRecognizer) {
-        guard let cap = g.view as? KeyCap else { return }
-        let p = g.location(in: self)
-        switch g.state {
-        case .began:
-            let options = cap.spec.variants.map { shifted ? $0.uppercased() : $0 }
-            let c = VariantCallout(options: options)
-            let w = CGFloat(options.count) * 40
-            var x = cap.frame.midX - 20
-            x = min(max(4, x), bounds.width - w - 4)
-            c.frame = CGRect(x: x, y: max(0, cap.frame.minY - 50), width: w, height: 46)
-            addSubview(c)
-            callout = c
-        case .changed:
-            callout?.select(at: convert(p, to: callout))
-        case .ended:
-            if let c = callout, let s = c.selected { delegate?.variantChosen(s, of: cap.spec) }
-            fallthrough
-        default:
-            callout?.removeFromSuperview(); callout = nil
+    private func endAllTouches() {
+        touches.values.forEach(finish)
+        touches = [:]
+    }
+
+    override func touchesBegan(_ set: Set<UITouch>, with event: UIEvent?) {
+        for touch in set {
+            let p = touch.location(in: self)
+            guard p.y >= Self.barHeight, let cap = nearestKey(to: p) else { continue }
+            // rollover: a new finger commits every earlier key still down (not long-presses in progress)
+            for (id, t) in touches where t.callout == nil && t.cap.spec.kind != .backspace {
+                fire(t); finish(t); touches[id] = nil
+            }
+            let t = Tracked(cap: cap)
+            touches[ObjectIdentifier(touch)] = t
+            cap.isHighlighted = true
+
+            switch cap.spec.kind {
+            case .globe:
+                if let e = event { delegate?.inputController?.handleInputModeList(from: self, with: e) }
+                t.done = true
+            case .backspace:
+                fire(t)                                         // delete on touch-down, then repeat
+                t.timer = Timer.scheduledTimer(withTimeInterval: 0.45, repeats: false) { [weak self] _ in
+                    t.repeater = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { _ in
+                        self?.delegate?.keyTapped(t.cap.spec)
+                    }
+                }
+            case .space:
+                t.timer = Timer.scheduledTimer(withTimeInterval: 0.6, repeats: false) { [weak self] _ in
+                    t.done = true
+                    self?.delegate?.spaceLongPressed()
+                }
+            default:
+                if !cap.spec.variants.isEmpty {
+                    t.timer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) { [weak self] _ in
+                        self?.openCallout(for: t)
+                    }
+                }
+            }
         }
+    }
+
+    override func touchesMoved(_ set: Set<UITouch>, with event: UIEvent?) {
+        for touch in set {
+            guard let t = touches[ObjectIdentifier(touch)] else { continue }
+            if t.cap.spec.kind == .globe {
+                if let e = event { delegate?.inputController?.handleInputModeList(from: self, with: e) }
+            } else if let c = t.callout {
+                c.select(at: touch.location(in: c))
+            }
+        }
+    }
+
+    override func touchesEnded(_ set: Set<UITouch>, with event: UIEvent?) {
+        for touch in set {
+            let id = ObjectIdentifier(touch)
+            guard let t = touches[id] else { continue }
+            touches[id] = nil
+            if t.cap.spec.kind == .globe {
+                if let e = event { delegate?.inputController?.handleInputModeList(from: self, with: e) }
+            } else if let c = t.callout {
+                if let v = c.selected { delegate?.variantChosen(v, of: t.cap.spec) }
+                t.done = true
+            } else {
+                fire(t)
+            }
+            finish(t)
+        }
+    }
+
+    override func touchesCancelled(_ set: Set<UITouch>, with event: UIEvent?) {
+        // iOS took the touch away (system gesture). A quick tap was still a tap.
+        for touch in set {
+            let id = ObjectIdentifier(touch)
+            guard let t = touches[id] else { continue }
+            touches[id] = nil
+            if t.callout == nil && t.cap.spec.kind != .globe && Date().timeIntervalSince(t.start) < 0.35 { fire(t) }
+            finish(t)
+        }
+    }
+
+    private func openCallout(for t: Tracked) {
+        let options = t.cap.spec.variants.map { shifted ? $0.uppercased() : $0 }
+        let c = VariantCallout(options: options)
+        c.isUserInteractionEnabled = false          // the finger that opened it keeps driving it
+        let w = CGFloat(options.count) * 40
+        let x = min(max(4, t.cap.frame.midX - 20), bounds.width - w - 4)
+        c.frame = CGRect(x: x, y: max(0, t.cap.frame.minY - 50), width: w, height: 46)
+        addSubview(c)
+        t.callout = c
     }
 }
 
