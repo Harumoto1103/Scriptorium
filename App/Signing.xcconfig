@@ -1,0 +1,3 @@
+// Signing settings. Your team id goes in Local.xcconfig (git-ignored);
+// without it the project still generates, but you must pick a team in Xcode.
+#include? "Local.xcconfig"

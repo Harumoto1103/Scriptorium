@@ -1,0 +1,82 @@
+# XcodeGen spec for the macOS input method.
+#   cd Mac && xcodegen generate && xcodebuild -scheme ScriptoriumIME -configuration Release build
+#   ../tools/mac-install.sh      (copies to ~/Library/Input Methods and enables both modes)
+name: ScriptoriumIME
+options:
+  bundleIdPrefix: uk.harukita
+  deploymentTarget:
+    macOS: "13.0"
+packages:
+  ClassicalKeyboardEngine:
+    path: ../Engine
+targets:
+  ScriptoriumIME:
+    type: application
+    platform: macOS
+    sources:
+      - Scriptorium
+      - path: ../out/latin.lex
+        buildPhase: resources
+      - path: ../out/greek.lex
+        buildPhase: resources
+    dependencies:
+      - package: ClassicalKeyboardEngine
+      - sdk: InputMethodKit.framework
+      - sdk: Carbon.framework
+    settings:
+      base:
+        PRODUCT_NAME: Scriptorium
+        # IMK requires "inputmethod" in the bundle id
+        PRODUCT_BUNDLE_IDENTIFIER: uk.harukita.inputmethod.Scriptorium
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_VERSION: "5.0"
+        MARKETING_VERSION: "0.1"
+        CURRENT_PROJECT_VERSION: "3"
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        ENABLE_HARDENED_RUNTIME: NO
+        COMBINE_HIDPI_IMAGES: NO
+    info:
+      path: Scriptorium/Info.plist
+      properties:
+        CFBundleDisplayName: Scriptorium
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        LSBackgroundOnly: true
+        LSUIElement: true
+        NSPrincipalClass: NSApplication
+        InputMethodConnectionName: uk.harukita.inputmethod.Scriptorium_Connection
+        InputMethodServerControllerClass: $(PRODUCT_MODULE_NAME).InputController
+        InputMethodServerDelegateClass: $(PRODUCT_MODULE_NAME).InputController
+        tsInputMethodCharacterRepertoireKey: [Latn, Grek]
+        tsInputMethodIconFileKey: latin.pdf
+        TISIconIsTemplate: true
+        ComponentInputModeDict:
+          tsVisibleInputModeOrderedArrayKey:
+            - uk.harukita.inputmethod.Scriptorium.Latin
+            - uk.harukita.inputmethod.Scriptorium.Greek
+          tsInputModeListKey:
+            uk.harukita.inputmethod.Scriptorium.Latin:
+              TISInputSourceID: uk.harukita.inputmethod.Scriptorium.Latin
+              TISIntendedLanguage: la
+              tsInputModeScriptKey: smRoman
+              tsInputModeCharacterRepertoireKey: [Latn]
+              tsInputModeMenuIconFileKey: latin.pdf
+              tsInputModeAlternateMenuIconFileKey: latin.pdf
+              tsInputModePaletteIconFileKey: latin.pdf
+              TISIconIsTemplate: true
+              tsInputModeIsVisibleKey: true
+              tsInputModeDefaultStateKey: true
+              tsInputModePrimaryInScriptKey: true
+            uk.harukita.inputmethod.Scriptorium.Greek:
+              TISInputSourceID: uk.harukita.inputmethod.Scriptorium.Greek
+              TISIntendedLanguage: grc
+              tsInputModeScriptKey: smGreek
+              tsInputModeCharacterRepertoireKey: [Grek]
+              tsInputModeMenuIconFileKey: greek.pdf
+              tsInputModeAlternateMenuIconFileKey: greek.pdf
+              tsInputModePaletteIconFileKey: greek.pdf
+              TISIconIsTemplate: true
+              tsInputModeIsVisibleKey: true
+              tsInputModeDefaultStateKey: true
+              tsInputModePrimaryInScriptKey: true

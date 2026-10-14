@@ -1,0 +1,96 @@
+# XcodeGen spec:  cd App && xcodegen generate && open Scriptorium.xcodeproj
+name: Scriptorium
+options:
+  bundleIdPrefix: uk.harukita
+  deploymentTarget:
+    iOS: "16.0"
+packages:
+  ClassicalKeyboardEngine:
+    path: ../Engine
+configFiles:
+  Debug: Signing.xcconfig
+  Release: Signing.xcconfig
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+    # Signing team: put `DEVELOPMENT_TEAM = <your team id>` in App/Local.xcconfig
+    # (git-ignored; see Local.xcconfig.example).
+    # Free Personal Team. App Groups (shared settings between the app and the
+    # keyboards) need a paid account; without them each keyboard keeps its own
+    # settings, changed by long-pressing its space bar. With a paid team, add to
+    # each target:  entitlements: {path: …, properties: {com.apple.security.application-groups: [group.uk.harukita.scriptorium]}}
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  Scriptorium:
+    type: application
+    platform: iOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: uk.harukita.Scriptorium
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    sources: [Scriptorium, Shared/Settings.swift]
+    dependencies:
+      - target: LatinKeyboard
+      - target: GreekKeyboard
+      - package: ClassicalKeyboardEngine
+    info:
+      path: Scriptorium/Info.plist
+      properties:
+        CFBundleDisplayName: Scriptorium
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+
+  LatinKeyboard:
+    type: app-extension
+    platform: iOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: uk.harukita.Scriptorium.LatinKeyboard
+    sources:
+      - LatinKeyboard
+      - Shared
+      - path: ../out/latin.lex
+        buildPhase: resources
+    dependencies:
+      - package: ClassicalKeyboardEngine
+    info:
+      path: LatinKeyboard/Info.plist
+      properties:
+        CFBundleDisplayName: Latīna
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.keyboard-service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).LatinKeyboardViewController
+          NSExtensionAttributes:
+            PrimaryLanguage: la
+            PrefersRightToLeft: false
+            IsASCIICapable: false
+            RequestsOpenAccess: false     # no network, no full access: nothing leaves the phone
+
+  GreekKeyboard:
+    type: app-extension
+    platform: iOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: uk.harukita.Scriptorium.GreekKeyboard
+    sources:
+      - GreekKeyboard
+      - Shared
+      - path: ../out/greek.lex
+        buildPhase: resources
+    dependencies:
+      - package: ClassicalKeyboardEngine
+    info:
+      path: GreekKeyboard/Info.plist
+      properties:
+        CFBundleDisplayName: Ἑλληνική
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.keyboard-service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).GreekKeyboardViewController
+          NSExtensionAttributes:
+            PrimaryLanguage: grc
+            PrefersRightToLeft: false
+            IsASCIICapable: false
+            RequestsOpenAccess: false
