@@ -84,6 +84,29 @@ public final class Lexicon {
         return out
     }
 
+    /// `exact` for many keys in one query (the corrector asks for ~500 at once;
+    /// one statement is far cheaper than 500 bind/step/reset round trips).
+    public func exactMany(_ keys: [String], perKey: Int = 2) -> [String: [Entry]] {
+        var out: [String: [Entry]] = [:]
+        var i = 0
+        while i < keys.count {
+            let chunk = Array(keys[i..<min(i + 400, keys.count)])
+            i += chunk.count
+            let sql = "SELECT key, word, freq FROM lex WHERE key IN ("
+                + String(repeating: "?,", count: chunk.count - 1) + "?)"
+            var s: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &s, nil) == SQLITE_OK, let st = s else { continue }
+            for (j, k) in chunk.enumerated() { sqlite3_bind_text(st, Int32(j + 1), k, -1, SQLITE_TRANSIENT) }
+            while sqlite3_step(st) == SQLITE_ROW {
+                let k = Self.text(st, 0)
+                out[k, default: []].append(Entry(key: k, word: Self.text(st, 1), freq: Int(sqlite3_column_int64(st, 2))))
+            }
+            sqlite3_finalize(st)
+        }
+        for (k, v) in out { out[k] = Array(v.sorted { $0.freq > $1.freq }.prefix(perKey)) }
+        return out
+    }
+
     /// Highest frequency for a key, or nil if the key is not a word at all.
     public func maxFreq(_ key: String) -> Int? {
         var f: Int?

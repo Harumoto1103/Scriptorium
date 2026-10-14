@@ -17,7 +17,11 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
     var language: Language { .latin }
     var lexiconName: String { "latin" }
 
-    private var predictor: Predictor?
+    private var predictor: Predictor?            // background queue only (suggestions)
+    /// Main thread only: confirming a word (space, punctuation) must never wait
+    /// behind the background queue — while the main thread waits, taps are lost.
+    /// Own SQLite connection; shares the (locked) user model.
+    private var commitPredictor: Predictor?
     private var settings = KeyboardSettings.load()
     private let kv = KeyboardView()
     private var heightConstraint: NSLayoutConstraint?
@@ -64,8 +68,9 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
         ])
         if let path = Bundle.main.path(forResource: lexiconName, ofType: "lex"),
            let lex = try? Lexicon(path: path) {
-            predictor = Predictor(lexicon: lex,
-                                  user: UserModel.load(from: KeyboardSettings.userModelURL(language.rawValue)))
+            let user = UserModel.load(from: KeyboardSettings.userModelURL(language.rawValue))
+            predictor = Predictor(lexicon: lex, user: user)
+            if let lex2 = try? Lexicon(path: path) { commitPredictor = Predictor(lexicon: lex2, user: user) }
         }
         applySettings()
         rebuildKeys()
@@ -89,7 +94,8 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         let url = KeyboardSettings.userModelURL(language.rawValue)
-        engineQ.sync { try? predictor?.user.save(to: url) }
+        let user = predictor?.user
+        engineQ.async { try? user?.save(to: url) }
     }
 
     // The document changed. If it is our own typing echoing back, ignore it; if we
@@ -121,8 +127,13 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
 
     private func applySettings() {
         kv.showDiagnostics = settings.diagnostics
-        guard let p = predictor else { return }
         let s = settings
+        if let c = commitPredictor {
+            c.autocorrectEnabled = s.autocorrect
+            c.latinStyle = LatinStyle(macrons: s.latinMacrons, consonantalV: s.latinConsonantalV, consonantalJ: s.latinJ)
+            c.greekStyle = GreekStyle(quantities: s.greekQuantities)
+        }
+        guard let p = predictor else { return }
         engineQ.async {
             p.autocorrectEnabled = s.autocorrect
             p.latinStyle = LatinStyle(macrons: s.latinMacrons, consonantalV: s.latinConsonantalV,
@@ -198,11 +209,11 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
         }
     }
 
-    /// Prediction for the current input, synchronously (space / punctuation need it now).
+    /// Prediction for the current input, right now (space / punctuation need it).
+    /// Never waits for the background queue: uses the main-thread predictor.
     private func predictNow(_ prev: String?, _ word: String) -> Prediction? {
         if let c = cached, c.prev == prev, c.word == word { return c.prediction }
-        guard let p = predictor else { return nil }
-        return engineQ.sync { p.predict(previous: prev, typed: word) }
+        return commitPredictor?.predict(previous: prev, typed: word)
     }
 
     private func show(_ pred: Prediction, word: String) {

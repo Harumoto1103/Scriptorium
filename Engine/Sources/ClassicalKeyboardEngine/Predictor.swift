@@ -130,8 +130,10 @@ public final class Predictor {
         // 4. corrections, only when the input is not already a decent word
         let literalScore = exact.first { $0.word.hasSuffix("’") == elided }.map { logf($0.freq) } ?? -1.0
         if key.count >= 2 && literalScore < 1.5 {
-            for (k, cost) in edits(key) {
-                for e in lexicon.exact(k).prefix(2) { add(e, .correction, cost) }
+            let candidates = edits(key)
+            let found = lexicon.exactMany(candidates.map(\.0))
+            for (k, cost) in candidates {
+                for e in found[k] ?? [] { add(e, .correction, cost) }
             }
         }
 
