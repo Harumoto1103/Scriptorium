@@ -87,8 +87,7 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
         super.viewDidAppear(animated)
         // The system's screen-edge gestures delay touches near the edges (a, q, p, l…),
         // and quick taps there get lost. Let touches through immediately.
-        view.window?.gestureRecognizers?.forEach { $0.delaysTouchesBegan = false }
-        view.superview?.gestureRecognizers?.forEach { $0.delaysTouchesBegan = false }
+        kv.relaxSystemGates()
     }
 
     override func viewWillDisappear(_ animated: Bool) {

@@ -140,6 +140,7 @@ final class KeyboardView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        relaxSystemGates()
         bar.frame = CGRect(x: 4, y: 0, width: bounds.width - 8 - 36, height: Self.barHeight)
         moreButton.frame = CGRect(x: bounds.width - 40, y: 0, width: 36, height: Self.barHeight)
         diagLabel.frame = CGRect(x: 6, y: 0, width: bounds.width - 12, height: 12)
@@ -156,6 +157,40 @@ final class KeyboardView: UIView {
                 x += w; i += 1
             }
             y += Self.rowHeight
+        }
+    }
+
+    // MARK: system edge gate
+    //
+    // iOS puts a system edge-gesture recognizer (_UISystemGestureGateGestureRecognizer)
+    // on the keyboard's window. It *delays* touches near the left and bottom edges
+    // (q, a, shift, 123, space) until it decides whether you are swiping, and if it
+    // then cancels them we never even saw them begin: the keystroke is silently lost.
+    // Turning the delay off once is not enough — the window can change, so do it on
+    // every window move, layout pass and touch. (Same fix as pathorsAI/parley#506.)
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        relaxSystemGates()
+    }
+
+    func relaxSystemGates() {
+        var v: UIView? = self
+        var seen = Set<ObjectIdentifier>()
+        while let view = v {
+            for g in view.gestureRecognizers ?? [] where !seen.contains(ObjectIdentifier(g)) {
+                seen.insert(ObjectIdentifier(g))
+                g.delaysTouchesBegan = false
+                g.delaysTouchesEnded = false
+                if String(describing: type(of: g)).contains("SystemGestureGate") {
+                    g.cancelsTouchesInView = false      // a system swipe must not eat our taps
+                }
+            }
+            v = view.superview
+        }
+        for g in window?.gestureRecognizers ?? [] where !seen.contains(ObjectIdentifier(g)) {
+            g.delaysTouchesBegan = false
+            g.delaysTouchesEnded = false
+            if String(describing: type(of: g)).contains("SystemGestureGate") { g.cancelsTouchesInView = false }
         }
     }
 
@@ -235,6 +270,7 @@ final class KeyboardView: UIView {
     }
 
     override func touchesBegan(_ set: Set<UITouch>, with event: UIEvent?) {
+        relaxSystemGates()      // cheap; catches a gate attached after the last layout
         for touch in set {
             let p = touch.location(in: self)
             guard p.y >= Self.barHeight, let cap = nearestKey(to: p) else { continue }
