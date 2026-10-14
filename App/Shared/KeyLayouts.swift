@@ -52,8 +52,9 @@ enum KeyLayouts {
         case .latin:
             bottom += [KeySpec(kind: .mark(.macron), width: 1, label: "¯",
                                variants: ["◌\u{0308}"]),
-                       KeySpec(kind: .space, width: globe ? 4.0 : 5.25, label: "spatium"),
-                       KeySpec(kind: .char("."), width: 1, variants: [",", ";", ":", "?", "!"]),
+                       KeySpec(kind: .space, width: globe ? 3.0 : 4.25, label: "spatium"),
+                       KeySpec(kind: .char(","), width: 1),
+                       KeySpec(kind: .char("."), width: 1, variants: [";", ":", "?", "!"]),
                        KeySpec(kind: .enter, width: 1.75, label: "⏎")]
             return [letters("qwertyuiop"),
                     letters("asdfghjkl"),
@@ -66,8 +67,9 @@ enum KeyLayouts {
                        KeySpec(kind: .mark(.acute), width: 1, label: "´",
                                variants: [MarkKey.grave, .circumflex, .smooth, .rough, .iotaSubscript, .breve, .diaeresis]
                                    .map { "◌" + $0.rawValue }),
-                       KeySpec(kind: .space, width: globe ? 3.0 : 4.25, label: "διάστημα"),
-                       KeySpec(kind: .char("."), width: 1, variants: [",", "·", ";", "’", "!"]),
+                       KeySpec(kind: .space, width: globe ? 2.5 : 3.75, label: "διάστημα"),
+                       KeySpec(kind: .char(","), width: 0.75),
+                       KeySpec(kind: .char("."), width: 0.75, variants: ["·", ";", "’", "!"]),
                        KeySpec(kind: .enter, width: 1.5, label: "⏎")]
             return [letters(";ςερτυθιοπ"),
                     letters("ασδφγηξκλ"),

@@ -142,6 +142,7 @@ final class KeyboardView: UIView {
         super.layoutSubviews()
         bar.frame = CGRect(x: 4, y: 0, width: bounds.width - 8 - 36, height: Self.barHeight)
         moreButton.frame = CGRect(x: bounds.width - 40, y: 0, width: 36, height: Self.barHeight)
+        diagLabel.frame = CGRect(x: 6, y: 0, width: bounds.width - 12, height: 12)
         let pad: CGFloat = 3
         let unit = bounds.width / 10
         var y = Self.barHeight
@@ -182,6 +183,26 @@ final class KeyboardView: UIView {
     }
     private var touches: [ObjectIdentifier: Tracked] = [:]
 
+    // MARK: diagnostics — where do fast keystrokes go missing?
+    struct Counters { var touches = 0, fired = 0, cancelled = 0, rolled = 0, typed = 0 }
+    var counters = Counters() { didSet { diagLabel.text = diagnosticsText } }
+    var showDiagnostics = false {
+        didSet { diagLabel.isHidden = !showDiagnostics; if showDiagnostics { counters = Counters() } }
+    }
+    private lazy var diagLabel: UILabel = {
+        let l = UILabel()
+        l.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
+        l.textColor = .systemRed
+        l.isHidden = true
+        l.isUserInteractionEnabled = false
+        addSubview(l)
+        return l
+    }()
+    private var diagnosticsText: String {
+        let c = counters
+        return "touch \(c.touches) · fired \(c.fired) · cancel \(c.cancelled) · roll \(c.rolled) · typed \(c.typed)"
+    }
+
     private func nearestKey(to point: CGPoint) -> KeyCap? {
         let row = Int((point.y - Self.barHeight) / Self.rowHeight)
         let inRow = keyViews.map(\.1).filter { Int(($0.frame.midY - Self.barHeight) / Self.rowHeight) == row }
@@ -197,6 +218,7 @@ final class KeyboardView: UIView {
     private func fire(_ t: Tracked) {
         guard !t.done else { return }
         t.done = true
+        if showDiagnostics { counters.fired += 1 }
         UIDevice.current.playInputClick()
         delegate?.keyTapped(t.cap.spec)
     }
@@ -218,8 +240,10 @@ final class KeyboardView: UIView {
             guard p.y >= Self.barHeight, let cap = nearestKey(to: p) else { continue }
             // rollover: a new finger commits every earlier key still down (not long-presses in progress)
             for (id, t) in touches where t.callout == nil && t.cap.spec.kind != .backspace {
+                if showDiagnostics && !t.done { counters.rolled += 1 }
                 fire(t); finish(t); touches[id] = nil
             }
+            if showDiagnostics { counters.touches += 1 }
             let t = Tracked(cap: cap)
             touches[ObjectIdentifier(touch)] = t
             cap.isHighlighted = true
@@ -284,6 +308,7 @@ final class KeyboardView: UIView {
             let id = ObjectIdentifier(touch)
             guard let t = touches[id] else { continue }
             touches[id] = nil
+            if showDiagnostics { counters.cancelled += 1 }
             if t.callout == nil && t.cap.spec.kind != .globe && Date().timeIntervalSince(t.start) < 0.35 { fire(t) }
             finish(t)
         }

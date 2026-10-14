@@ -32,6 +32,8 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
     /// The word we inserted last, while it is still followed by exactly one space:
     /// Greek accents between it and the next word are settled when that word is committed.
     private var lastCommitted: String?
+    /// We just turned "word␣," into "word,␣": swallow the user's habitual next space.
+    private var swallowSpace = false
 
     var inputController: UIInputViewController? { self }
 
@@ -118,6 +120,7 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
     }
 
     private func applySettings() {
+        kv.showDiagnostics = settings.diagnostics
         guard let p = predictor else { return }
         let s = settings
         engineQ.async {
@@ -146,6 +149,7 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
     private func ins(_ s: String) {
         guard !s.isEmpty else { return }
         textDocumentProxy.insertText(s)
+        if kv.showDiagnostics { kv.counters.typed += s.count }
         shadow += s
         if shadow.count > 400 { shadow = String(shadow.suffix(300)) }
         lastOwnEdit = Date()
@@ -228,6 +232,10 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
     // MARK: key handling
 
     func keyTapped(_ key: KeySpec) {
+        if swallowSpace {
+            swallowSpace = false
+            if key.kind == .space && context().1.isEmpty { return }
+        }
         switch key.kind {
         case .char(let c):
             insert(kv.shifted ? c.uppercased() : c)
@@ -291,6 +299,17 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
 
     private func insert(_ s: String) {
         lastCorrection = nil
+        // "verbum␣" + "," → "verbum, " : punctuation goes in front of the space we just added
+        if lastCommitted != nil, before.hasSuffix(" "), let c = s.first, Composer.attaching.contains(c),
+           context().1.isEmpty {
+            del(1)
+            ins(s + " ")
+            lastCommitted = nil
+            swallowSpace = true
+            updateShift()
+            refresh()
+            return
+        }
         if let c = s.first, !c.isLetter, !context().1.isEmpty {
             // punctuation ends a word too: restore accents
             commitWord(trailing: "")

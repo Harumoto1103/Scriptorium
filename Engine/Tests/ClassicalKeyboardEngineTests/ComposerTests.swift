@@ -104,6 +104,14 @@ final class ComposerTests: XCTestCase {
         XCTAssertEqual(type(c, "~~"), "`")                          // pressed twice: the backtick itself
     }
 
+    func testPunctuationAfterSpace() throws {
+        let p = Predictor(lexicon: try lexicon("latin.lex"))
+        let c = Composer(predictor: p)
+        XCTAssertEqual(type(c, "arma , virumque ."), "arma, virumque. ")
+        c.reset()
+        XCTAssertEqual(type(c, "arma,"), "arma,")                    // typed directly: unchanged
+    }
+
     func testPaging() throws {
         let c = Composer(predictor: Predictor(lexicon: try lexicon("greek.lex")))
         _ = type(c, "λογ")

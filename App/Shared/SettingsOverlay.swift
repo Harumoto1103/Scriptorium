@@ -65,6 +65,8 @@ final class SettingsOverlay: UIView {
             row("Grave & enclitic accents (καλὸς)", \.greekAutoGrave)
         }
 
+        row("Typing diagnostics (tap counters)", \.diagnostics)
+
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),

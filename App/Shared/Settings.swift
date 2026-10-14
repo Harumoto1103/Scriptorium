@@ -13,6 +13,7 @@ struct KeyboardSettings: Equatable {
     var latinJ = false               // iam (on: jam)
     var greekQuantities = true       // χώρᾱ
     var greekAutoGrave = true        // καλὸς before another word
+    var diagnostics = false          // live tap counters in the suggestion bar
 
     static func load() -> KeyboardSettings {
         let d = defaults
@@ -24,6 +25,7 @@ struct KeyboardSettings: Equatable {
         b("latinJ", &s.latinJ)
         b("greekQuantities", &s.greekQuantities)
         b("greekAutoGrave", &s.greekAutoGrave)
+        b("diagnostics", &s.diagnostics)
         return s
     }
 
@@ -35,6 +37,7 @@ struct KeyboardSettings: Equatable {
         d.set(latinJ, forKey: "latinJ")
         d.set(greekQuantities, forKey: "greekQuantities")
         d.set(greekAutoGrave, forKey: "greekAutoGrave")
+        d.set(diagnostics, forKey: "diagnostics")
     }
 
     /// Where each keyboard keeps what it has learned about the user.

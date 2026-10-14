@@ -61,6 +61,8 @@ public final class Composer {
     private var lastWord: String?
     private var previous: String?
     private var lastCorrection: (original: String, inserted: String)?
+    /// We just turned "word␣," into "word,␣": the user's habitual next space is swallowed.
+    private var swallowSpace = false
 
     public init(predictor: Predictor) { self.predictor = predictor }
 
@@ -82,6 +84,10 @@ public final class Composer {
     }
 
     public func handle(_ key: Key) -> Response {
+        if swallowSpace {
+            swallowSpace = false
+            if key == .space && !isComposing { return Response() }
+        }
         switch key {
         case .letter(let c):
             lastCorrection = nil
@@ -219,8 +225,18 @@ public final class Composer {
         if !pending.isEmpty { buffer += pendingRaw; pending = []; pendingRaw = "" }
     }
 
+    /// Punctuation that belongs to the word before it: typed right after
+    /// "word␣", it goes in front of the space ("word, "), as on Apple's keyboards.
+    public static let attaching: Set<Character> = [",", ".", ";", ":", "·", "!", "?", "’", ")", "»", "]", "\u{037E}"]
+
     private func punctuation(_ p: String) -> Response {
         lastCorrection = nil
+        if buffer.isEmpty, lastWord != nil, let c = p.first, Self.attaching.contains(c) {
+            lastWord = nil
+            previous = nil
+            swallowSpace = true
+            return Response(edit: Edit(replace: " ", with: p + " "))
+        }
         if buffer.isEmpty { lastWord = nil; return Response(edit: Edit(with: p)) }
         var e = commit(candidates[selected], trailing: "")
         e.with += p
