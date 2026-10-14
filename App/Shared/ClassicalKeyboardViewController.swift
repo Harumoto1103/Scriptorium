@@ -1,11 +1,18 @@
 import ClassicalKeyboardEngine
+import os
 import UIKit
 
 /// Shared controller for both keyboards; subclasses only name the language.
 ///
-/// Text model: the "current word" is whatever run of letters sits right before
-/// the cursor (read from documentContextBeforeInput). Nothing is held in a
-/// buffer, so moving the cursor or editing elsewhere never desynchronises us.
+/// Text model: we keep `shadow`, our own copy of the text before the cursor,
+/// updated synchronously with every edit we make. The proxy's
+/// documentContextBeforeInput is updated *asynchronously* and lags behind fast
+/// typing; reading it mid-burst made us delete and rewrite the wrong letters.
+/// We only resynchronise from the proxy when the document changes under us
+/// (cursor moved, host cleared the field) and we are not in the middle of typing.
+///
+/// Prediction runs on a background queue so taps are never blocked by it; only
+/// the newest result is shown.
 class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelegate {
     var language: Language { .latin }
     var lexiconName: String { "latin" }
@@ -27,6 +34,18 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
     private var lastCommitted: String?
 
     var inputController: UIInputViewController? { self }
+
+    // shadow of the document + resync bookkeeping
+    private var shadow = ""
+    private var lastOwnEdit = Date.distantPast
+    private var resyncWork: DispatchWorkItem?
+
+    // the predictor (SQLite, not thread-safe) is only touched on this queue
+    private let engineQ = DispatchQueue(label: "scriptorium.engine", qos: .userInitiated)
+    private let latestRequest = OSAllocatedUnfairLock(initialState: 0)
+    private var requestID = 0
+    /// last finished prediction, reused by space if it is for the same input
+    private var cached: (prev: String?, word: String, prediction: Prediction)?
 
     // MARK: life cycle
 
@@ -54,8 +73,7 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
         super.viewWillAppear(animated)
         settings = KeyboardSettings.load()      // may have changed in the app
         applySettings()
-        updateShift()
-        refresh()
+        resync()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -68,20 +86,47 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        try? predictor?.user.save(to: KeyboardSettings.userModelURL(language.rawValue))
+        let url = KeyboardSettings.userModelURL(language.rawValue)
+        engineQ.sync { try? predictor?.user.save(to: url) }
     }
 
-    override func textDidChange(_ textInput: UITextInput?) {
+    // The document changed. If it is our own typing echoing back, ignore it; if we
+    // have been idle, it changed under us (cursor moved, field cleared): resync.
+    override func textDidChange(_ textInput: UITextInput?) { documentMayHaveChanged() }
+    override func selectionDidChange(_ textInput: UITextInput?) { documentMayHaveChanged() }
+
+    private func documentMayHaveChanged() {
+        resyncWork?.cancel()
+        if Date().timeIntervalSince(lastOwnEdit) > 0.6 {
+            resync()
+        } else {
+            let w = DispatchWorkItem { [weak self] in self?.documentMayHaveChanged() }
+            resyncWork = w
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.65, execute: w)
+        }
+    }
+
+    private func resync() {
+        let ctx = textDocumentProxy.documentContextBeforeInput ?? ""
+        if !(shadow.hasSuffix(ctx) || ctx.hasSuffix(shadow)) || ctx.isEmpty != shadow.isEmpty {
+            shadow = ctx
+            lastCommitted = nil
+            lastCorrection = nil
+        }
         updateShift()
         refresh()
     }
 
     private func applySettings() {
         guard let p = predictor else { return }
-        p.autocorrectEnabled = settings.autocorrect
-        p.latinStyle = LatinStyle(macrons: settings.latinMacrons, consonantalV: settings.latinConsonantalV,
-                                  consonantalJ: settings.latinJ)
-        p.greekStyle = GreekStyle(quantities: settings.greekQuantities)
+        let s = settings
+        engineQ.async {
+            p.autocorrectEnabled = s.autocorrect
+            p.latinStyle = LatinStyle(macrons: s.latinMacrons, consonantalV: s.latinConsonantalV,
+                                      consonantalJ: s.latinJ)
+            p.greekStyle = GreekStyle(quantities: s.greekQuantities)
+        }
+        cached = nil
     }
 
     private func rebuildKeys() {
@@ -94,9 +139,25 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
         }
     }
 
-    // MARK: reading the document
+    // MARK: reading and editing the document (always through the shadow)
 
-    private var before: String { textDocumentProxy.documentContextBeforeInput ?? "" }
+    private var before: String { shadow }
+
+    private func ins(_ s: String) {
+        guard !s.isEmpty else { return }
+        textDocumentProxy.insertText(s)
+        shadow += s
+        if shadow.count > 400 { shadow = String(shadow.suffix(300)) }
+        lastOwnEdit = Date()
+    }
+
+    private func del(_ n: Int) {
+        for _ in 0..<max(0, n) {
+            textDocumentProxy.deleteBackward()
+            if !shadow.isEmpty { shadow.removeLast() }
+        }
+        lastOwnEdit = Date()
+    }
 
     private static func isWordChar(_ c: Character) -> Bool { c.isLetter }
     private static let sentenceEnd: Set<Character> = [".", ";", "·", "?", "!", ":", "\n", "\u{037E}"]
@@ -114,10 +175,33 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
 
     // MARK: suggestions
 
+    /// Ask for suggestions in the background; show them only if still current.
     private func refresh() {
         guard let p = predictor else { return }
         let (prev, word) = context()
-        let pred = p.predict(previous: prev, typed: word)
+        requestID += 1
+        let id = requestID
+        latestRequest.withLock { $0 = id }
+        engineQ.async { [weak self] in
+            // a newer keystroke already asked again: skip this one
+            guard let self, self.latestRequest.withLock({ $0 }) == id else { return }
+            let pred = p.predict(previous: prev, typed: word)
+            DispatchQueue.main.async {
+                guard id == self.requestID else { return }
+                self.cached = (prev, word, pred)
+                self.show(pred, word: word)
+            }
+        }
+    }
+
+    /// Prediction for the current input, synchronously (space / punctuation need it now).
+    private func predictNow(_ prev: String?, _ word: String) -> Prediction? {
+        if let c = cached, c.prev == prev, c.word == word { return c.prediction }
+        guard let p = predictor else { return nil }
+        return engineQ.sync { p.predict(previous: prev, typed: word) }
+    }
+
+    private func show(_ pred: Prediction, word: String) {
         var s = pred.suggestions.map(\.text)
         autocorrectSlot = nil
         if word.isEmpty {
@@ -199,7 +283,8 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
         var text = slots[i]
         if text.hasPrefix("\u{201C}") {                 // the literal: keep it and learn it
             text = word
-            predictor?.user.protect(word)
+            let w = word
+            engineQ.async { [weak self] in self?.predictor?.user.protect(w) }
         }
         replaceWord(word, with: text, trailing: " ")
     }
@@ -211,7 +296,7 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
             commitWord(trailing: "")
         }
         if let c = s.first, !c.isLetter { lastCommitted = nil }
-        textDocumentProxy.insertText(s)
+        ins(s)
         if shiftOnce { shiftOnce = false; kv.shifted = shiftLocked }
         updateShift()
         refresh()
@@ -219,20 +304,20 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
 
     private func applyMark(_ m: MarkKey) {
         guard let last = before.last, let marked = m.toggle(on: last) else { return }
-        textDocumentProxy.deleteBackward()
-        textDocumentProxy.insertText(String(marked))
+        del(1)
+        ins(String(marked))
         refresh()
     }
 
     private func commitWord(trailing: String) {
         let (prev, word) = context()
-        guard !word.isEmpty, let p = predictor else {
+        guard !word.isEmpty, let pred = predictNow(prev, word) else {
             lastCommitted = nil
-            textDocumentProxy.insertText(trailing)
+            ins(trailing)
+            updateShift()
             refresh()
             return
         }
-        let pred = p.predict(previous: prev, typed: word)
         var final = pred.autocorrect?.text ?? word
         if language == .greek { final = Greek.finalSigma(final) }
         replaceWord(word, with: final, trailing: trailing)
@@ -246,18 +331,19 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
            before.hasSuffix(prev + " " + word) {
             let (p, n) = Greek.join(prev, text)
             if p != prev {
-                for _ in 0..<(word.count + 1 + prev.count) { textDocumentProxy.deleteBackward() }
-                textDocumentProxy.insertText(p + " ")
+                del(word.count + 1 + prev.count)
+                ins(p + " ")
             } else {
-                for _ in 0..<word.count { textDocumentProxy.deleteBackward() }
+                del(word.count)
             }
             out = n
         } else {
-            for _ in 0..<word.count { textDocumentProxy.deleteBackward() }
+            del(word.count)
         }
-        textDocumentProxy.insertText(out + trailing)
+        ins(out + trailing)
         lastCommitted = trailing == " " ? out : nil
-        predictor?.user.learn(text, after: context().0, language: language)
+        let learned = text, after = context().0, lang = language
+        engineQ.async { [weak self] in self?.predictor?.user.learn(learned, after: after, language: lang) }
         lastCorrection = nil
         updateShift()
         refresh()
@@ -265,12 +351,13 @@ class ClassicalKeyboardViewController: UIInputViewController, KeyboardViewDelega
 
     private func backspace() {
         if let lc = lastCorrection, before.hasSuffix(lc.inserted) {
-            for _ in 0..<lc.inserted.count { textDocumentProxy.deleteBackward() }
-            textDocumentProxy.insertText(lc.original)
-            predictor?.user.protect(lc.original)
+            del(lc.inserted.count)
+            ins(lc.original)
+            let o = lc.original
+            engineQ.async { [weak self] in self?.predictor?.user.protect(o) }
             lastCorrection = nil
         } else {
-            textDocumentProxy.deleteBackward()
+            del(1)
         }
         lastCommitted = nil
         updateShift()
