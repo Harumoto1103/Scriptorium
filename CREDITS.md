@@ -44,21 +44,19 @@ shared under the same licence.
 - The postfix diacritic option follows TLG **Beta Code** conventions.
 
 ## Fonts in the artwork
-- App icons (`design/make_icons.swift`) are rendered with **Palatino**
-  (Linotype), as installed with macOS. Only raster images are shipped, not
-  the font.
-- The input-source badges (`design/make_badges.swift`) contain the outline of
-  one glyph each (ā, ἀ) from Apple's **SF Pro** system font, in a 16-pt
-  PDF.
-- **Before a public release** (App Store, website), re-render both with an
-  OFL-licensed font that has polytonic Greek, such as Noto Serif, GFS Didot
-  or Gentium Plus. Swap the font name in the two scripts and run them again.
+| Font | Used in | Licence |
+|---|---|---|
+| **Cardo** (David Perry) | app icons, `design/make_icons.swift` | [SIL OFL 1.1](https://openfontlicense.org) |
+| **Noto Sans** (Google), via Noto Sans SC | menu-bar input-source badges, `design/make_badges.swift` (one glyph outline each: ā, ἀ) | [SIL OFL 1.1](https://openfontlicense.org) |
+
+The fonts are not redistributed: only the rendered icons, plus the two
+single-glyph outlines in the badge PDFs, which the OFL permits.
 
 ## Tools and system libraries (not redistributed)
 - **XcodeGen** (MIT): generates the Xcode projects from `project.yml`.
 - **SQLite** (public domain): the system copy on iOS/macOS reads the lexicons.
 - Apple frameworks: UIKit, AppKit, InputMethodKit, Carbon (Text Input Sources).
 
-## Your own earlier work reused
+## Code from the author's other projects
 - `tools/grc_keys.py` is copied from the author's Ancient Greek dictionary
   project (`grc.py`, same author).

@@ -12,7 +12,11 @@ func badge(_ glyph: String, size: CGFloat, baseline: CGFloat, to url: URL) {
                         cornerWidth: 3.2, cornerHeight: 3.2, transform: nil)
     let letter = CGMutablePath()
 
-    let font = NSFont.systemFont(ofSize: size, weight: .semibold) as CTFont
+    // Noto Sans (SIL OFL 1.1): a neutral sans like the system badges, with polytonic Greek
+    let base = NSFont(name: "NotoSansSC-Regular", size: size) ?? NSFont(name: "Noto Sans SC", size: size)!
+    let wght = 0x77676874  // 'wght' axis of the variable font: semibold, like the system badges
+    let desc = base.fontDescriptor.addingAttributes([.variation: [wght: 620]])
+    let font = (NSFont(descriptor: desc, size: size) ?? base) as CTFont
     let line = CTLineCreateWithAttributedString(NSAttributedString(string: glyph, attributes: [.font: font]))
     let width = CTLineGetTypographicBounds(line, nil, nil, nil)
     let origin = CGPoint(x: 8 - width / 2, y: 1 + baseline)
@@ -37,6 +41,6 @@ func badge(_ glyph: String, size: CGFloat, baseline: CGFloat, to url: URL) {
 }
 
 let out = CommandLine.arguments[1]
-badge("ā", size: 12.5, baseline: 2.6, to: URL(fileURLWithPath: "\(out)/latin.pdf"))
-badge("ἀ", size: 12.0, baseline: 1.6, to: URL(fileURLWithPath: "\(out)/greek.pdf"))
+badge("ā", size: 12.5, baseline: 2.6, to: URL(fileURLWithPath: "\(out)/la-badge.pdf"))
+badge("ἀ", size: 12.0, baseline: 1.6, to: URL(fileURLWithPath: "\(out)/grc-badge.pdf"))
 print("ok")

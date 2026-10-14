@@ -1,5 +1,6 @@
 // Scriptorium app icons.  swift design/make_icons.swift <outdir>
-// ā (Latin) and ἀ (Greek) in Palatino, cream on Tyrian purple, divided by a gold rule.
+// ā (Latin) and ἀ (Greek) in Cardo (David Perry, SIL OFL 1.1 — a typeface made for
+// classical scholarship), cream on Tyrian purple, divided by a gold rule.
 import AppKit
 
 let cream = NSColor(srgbRed: 0.965, green: 0.918, blue: 0.812, alpha: 1)
@@ -16,7 +17,7 @@ func artwork(in r: NSRect) {
               toCenter: NSPoint(x: r.midX, y: r.maxY - r.height * 0.18), radius: r.width * 0.75, options: [])
 
     let s = r.width
-    let font = NSFont(name: "Palatino-Roman", size: s * 0.50)!
+    let font = NSFont(name: "Cardo", size: s * 0.52) ?? NSFont(name: "Cardo-Regular", size: s * 0.52)!
     let baseline = r.minY + s * 0.30                      // optical centre of x-height + marks
     func glyph(_ t: String, centerX: CGFloat) {
         let shadow = NSShadow()
